@@ -99,6 +99,7 @@ from crewai.execution import (
 from crewai.flow.flow_trackable import FlowTrackable
 from crewai.knowledge.knowledge import Knowledge, _resolve_knowledge_sources
 from crewai.knowledge.source.base_knowledge_source import BaseKnowledgeSource
+from crewai.knowledge.utils.knowledge_utils import crew_knowledge_collection_name
 from crewai.llm import LLM
 from crewai.llms.base_llm import BaseLLM
 from crewai.memory.memory_scope import MemoryScope, MemorySlice, _ensure_memory_kind
@@ -699,7 +700,12 @@ class Crew(FlowTrackable, BaseModel):
 
     @model_validator(mode="after")
     def create_crew_knowledge(self) -> Crew:
-        """Create the knowledge for the crew."""
+        """Create the knowledge for the crew.
+
+        Collection names follow the crew name so two crews in the same project
+        cannot read each other's embeddings. The default name ``crew`` keeps
+        the historical shared collection for unnamed crews.
+        """
         if self.knowledge_sources:
             try:
                 if isinstance(self.knowledge_sources, list) and all(
@@ -708,7 +714,7 @@ class Crew(FlowTrackable, BaseModel):
                     self.knowledge = Knowledge(
                         sources=self.knowledge_sources,
                         embedder=self.embedder,
-                        collection_name="crew",
+                        collection_name=crew_knowledge_collection_name(self.name),
                     )
                     self.knowledge.add_sources()
 

@@ -76,6 +76,10 @@ from crewai.events.types.skill_events import SkillUsedEvent
 from crewai.experimental.agent_executor import AgentExecutor
 from crewai.knowledge.knowledge import Knowledge
 from crewai.knowledge.source.base_knowledge_source import BaseKnowledgeSource
+from crewai.knowledge.utils.knowledge_utils import (
+    agent_knowledge_collection_name,
+    resolve_crew_name,
+)
 from crewai.lite_agent_output import LiteAgentOutput
 from crewai.llms.base_llm import BaseLLM
 from crewai.mcp.config import MCPServerConfig
@@ -446,7 +450,9 @@ class Agent(BaseAgent):
                     self.knowledge = Knowledge(
                         sources=self.knowledge_sources,
                         embedder=self.embedder,
-                        collection_name=self.role,
+                        collection_name=agent_knowledge_collection_name(
+                            self.role, resolve_crew_name(self.crew)
+                        ),
                     )
                     self.knowledge.add_sources()
         except (TypeError, ValueError) as e:
