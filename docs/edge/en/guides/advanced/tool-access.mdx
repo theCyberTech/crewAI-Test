@@ -1,0 +1,85 @@
+---
+title: Tool Access Lists
+description: Restrict which tools an agent can run with allowed_tools, blocked_tools, and require_approval_tools on SecurityConfig.
+icon: shield-check
+mode: "wide"
+---
+
+## Overview
+
+`SecurityConfig` can restrict tool calls at invocation time. A first-party `PRE_TOOL_CALL` hook enforces the lists **fail-closed**: a missing tool name, a policy evaluation error, or an unlisted write/SQL/MCP tool is denied.
+
+Set the lists on an `Agent`, `Task`, or `Crew`. The most restrictive combination wins. Names are sanitized to match hook `tool_name` values, so `"File Writer Tool"` and `"file_writer_tool"` are the same entry.
+
+| Field | When set | Effect |
+| --- | --- | --- |
+| `allowed_tools` | Only these names may run. `[]` denies every tool. | Allowlist |
+| `blocked_tools` | These names never run. **Block wins** over allow. | Denylist |
+| `require_approval_tools` | After allow/block pass, pause for operator input (`yes` / `y` / `approve`). | Approval gate |
+
+`None` (the default) means no rule. Existing agents stay unrestricted until you set a list.
+
+## Allow only read tools
+
+Give the agent write, SQL, and MCP tools if you need them on the object, but list only the safe names. Unlisted tools cannot run.
+
+```python
+from crewai import Agent, Crew, Task
+from crewai.mcp import MCPServerStdio
+from crewai.security import SecurityConfig
+from crewai_tools import FileReadTool, FileWriterTool, NL2SQLTool, WebsiteSearchTool
+
+researcher = Agent(
+    role="Researcher",
+    goal="Summarize public sources without changing systems",
+    backstory="A careful analyst who reads, then reports.",
+    tools=[
+        FileReadTool(),
+        FileWriterTool(),
+        NL2SQLTool(db_uri="sqlite:///research.db"),
+        WebsiteSearchTool(),
+    ],
+    mcps=[
+        MCPServerStdio(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        )
+    ],
+    security_config=SecurityConfig(
+        allowed_tools=[
+            "Read a file's content",
+            "Search in a specific website",
+        ]
+    ),
+)
+
+task = Task(
+    description="Read notes.md and search the project site for related facts.",
+    expected_output="A short briefing with citations.",
+    agent=researcher,
+)
+
+crew = Crew(agents=[researcher], tasks=[task])
+crew.kickoff()
+```
+
+In this crew:
+
+- `File Writer Tool` (`file_writer_tool`) is attached but **not listed**, so writes are blocked.
+- `NL2SQLTool` (`nl2sql_tool`) is attached but **not listed**, so SQL is blocked.
+- MCP tools are registered as `{server}_{tool}` (for example `filesystem_write_file`). They are blocked unless you add that prefixed name to `allowed_tools`.
+
+## Block and approval lists
+
+Use `blocked_tools` when most tools should stay available and only a few must never run. Use `require_approval_tools` when a listed tool may run only after an operator types `yes`.
+
+```python
+SecurityConfig(
+    blocked_tools=["file_writer_tool", "nl2sql_tool"],
+    require_approval_tools=["filesystem_read_file"],
+)
+```
+
+Agent, task, and crew configs are merged. If any config denies the call, the tool does not run.
+
+This is invocation-time enforcement. MCP discovery filters (`StaticToolFilter`) still hide tools from the model; `SecurityConfig` is the last line if a tool is called anyway.

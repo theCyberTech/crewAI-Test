@@ -17,6 +17,12 @@ from crewai.hooks.types import (
     BeforeToolCallHookCallable,
     BeforeToolCallHookType,
 )
+from crewai.security.tool_policy import (
+    POLICY_SOURCE,
+    collect_security_configs,
+    evaluate_tool_policy,
+    is_approval_response,
+)
 
 
 if TYPE_CHECKING:
@@ -170,8 +176,51 @@ def _hook_verbose(context: ToolCallHookContext) -> bool:
     return bool(getattr(context.agent, "verbose", False))
 
 
+def enforce_security_config_tool_policy(context: ToolCallHookContext) -> None:
+    """First-party ``PRE_TOOL_CALL`` hook that enforces ``SecurityConfig`` lists.
+
+    Fail-closed: any unexpected error becomes :class:`HookAborted` so a broken
+    policy cannot let a tool through. A per-context guard prevents a second
+    evaluation when this hook is also present in the global queue.
+    """
+    if getattr(context, "_security_policy_checked", False):
+        return
+    context._security_policy_checked = True
+
+    try:
+        configs = collect_security_configs(context.agent, context.task, context.crew)
+        decision = evaluate_tool_policy(context.tool_name, configs)
+        if decision.denied:
+            raise HookAborted(
+                reason=decision.reason or "tool denied by security_config",
+                source=POLICY_SOURCE,
+            )
+        if decision.require_approval:
+            response = context.request_human_input(
+                prompt=f"Approve {context.tool_name}?",
+                default_message=(
+                    f"Input: {context.tool_input}\nType 'yes' to approve:"
+                ),
+            )
+            if not is_approval_response(response):
+                raise HookAborted(
+                    reason=f"{context.tool_name} denied by operator",
+                    source=POLICY_SOURCE,
+                )
+    except HookAborted:
+        raise
+    except Exception as exc:
+        raise HookAborted(
+            reason=f"tool policy evaluation failed: {exc}",
+            source=POLICY_SOURCE,
+        ) from exc
+
+
 def run_before_tool_call_hooks(context: ToolCallHookContext) -> bool:
     """Run all ``pre_tool_call`` hooks against a context.
+
+    The first-party ``SecurityConfig`` policy always runs before user hooks so
+    ``clear_before_tool_call_hooks()`` cannot disable it.
 
     Returns:
         True if a hook blocked execution (returned False or raised
@@ -179,6 +228,7 @@ def run_before_tool_call_hooks(context: ToolCallHookContext) -> bool:
         context persist regardless.
     """
     try:
+        enforce_security_config_tool_policy(context)
         dispatch(
             InterceptionPoint.PRE_TOOL_CALL,
             context,
@@ -396,3 +446,12 @@ def clear_all_tool_call_hooks() -> tuple[int, int]:
     before_count = clear_before_tool_call_hooks()
     after_count = clear_after_tool_call_hooks()
     return (before_count, after_count)
+
+
+def _ensure_first_party_security_hook_registered() -> None:
+    """Register the SecurityConfig policy hook if it is not already present."""
+    if enforce_security_config_tool_policy not in _before_tool_call_hooks:
+        _before_tool_call_hooks.insert(0, enforce_security_config_tool_policy)
+
+
+_ensure_first_party_security_hook_registered()
