@@ -17,7 +17,6 @@ from crewai.knowledge.utils.knowledge_utils import (
     resolve_crew_name,
 )
 from crewai.rag.types import SearchResult
-from crewai.task import Task
 
 
 class TestCrewKnowledgeCollectionName:
@@ -119,26 +118,21 @@ def isolated_knowledge_store() -> dict[str, list[str]]:
         knowledge_factory.set_knowledge_storage_factory(original)
 
 
-def _crew_with_knowledge(content: str, name: str | None = None) -> Crew:
-    agent = Agent(role="Worker", goal="work", backstory="test")
-    task = Task(description="do work", expected_output="done", agent=agent)
-    kwargs: dict[str, Any] = {
-        "agents": [agent],
-        "tasks": [task],
-        "knowledge_sources": [StringKnowledgeSource(content=content)],
-    }
-    if name is not None:
-        kwargs["name"] = name
-    return Crew(**kwargs)
-
-
 def test_named_crews_do_not_share_knowledge_hits(
     isolated_knowledge_store: dict[str, list[str]],
 ) -> None:
-    alpha = _crew_with_knowledge(
-        "alpha secret token ALPHA_ONLY", name="alpha-research"
+    alpha = Crew(
+        name="alpha-research",
+        knowledge_sources=[
+            StringKnowledgeSource(content="alpha secret token ALPHA_ONLY")
+        ],
     )
-    beta = _crew_with_knowledge("beta secret token BETA_ONLY", name="beta-support")
+    beta = Crew(
+        name="beta-support",
+        knowledge_sources=[
+            StringKnowledgeSource(content="beta secret token BETA_ONLY")
+        ],
+    )
 
     assert alpha.knowledge is not None
     assert beta.knowledge is not None
@@ -157,7 +151,9 @@ def test_named_crews_do_not_share_knowledge_hits(
 def test_default_crew_name_keeps_historical_collection(
     isolated_knowledge_store: dict[str, list[str]],
 ) -> None:
-    crew = _crew_with_knowledge("shared default knowledge")
+    crew = Crew(
+        knowledge_sources=[StringKnowledgeSource(content="shared default knowledge")]
+    )
 
     assert crew.knowledge is not None
     assert crew.knowledge.storage is not None
