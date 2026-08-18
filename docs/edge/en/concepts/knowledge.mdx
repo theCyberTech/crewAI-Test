@@ -272,26 +272,20 @@ for agent in self.agents:
 
 #### Storage Independence
 
-Each knowledge level uses independent storage collections, and crew knowledge
-is isolated by crew name (the same namespacing memory already uses):
+Each knowledge level uses independent storage collections:
 
 ```python
-# Crew knowledge storage — isolated by crew name.
-# The default name "crew" keeps the historical shared collection.
-crew_collection_name = crew.name  # e.g. "crew" or "research-crew"
-
 # Agent knowledge storage
-# Standalone agents and the default-named crew keep the agent role.
-# Named crews prefix the role so the same role cannot leak across crews.
-agent_collection_name = agent.role  # e.g. "Technical Specialist"
-# Named crew example: "research-crew__technical-specialist"
+agent_collection_name = agent.role  # e.g., "Technical Specialist"
+
+# Crew knowledge storage  
+crew_collection_name = "crew"
 
 # Both stored in same ChromaDB instance but different collections
 # Path: ~/.local/share/CrewAI/{project}/knowledge/
-#   ├── crew/                                      # Default / unnamed crew
-#   ├── research-crew/                             # Named crew knowledge
-#   ├── Technical Specialist/                      # Agent knowledge (default crew)
-#   └── research-crew__technical-specialist/       # Agent knowledge (named crew)
+#   ├── crew/                    # Crew knowledge collection
+#   ├── Technical Specialist/    # Agent knowledge collection
+#   └── Another Agent Role/      # Another agent's collection
 ```
 
 ### Complete Working Examples
