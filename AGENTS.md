@@ -26,3 +26,17 @@ Follow these guidelines when contributing:
    To check for broken links, run `cd docs && mintlify broken-links`.
 5. After editing English docs, sync translations to `ar`, `ko`, and `pt-BR`
    before finishing the task. Follow [DOCS_TRANSLATIONS.md](DOCS_TRANSLATIONS.md).
+
+## Cursor Cloud specific instructions
+
+This is a Python library monorepo (Crews + Flows + CLI), not a web app. There is no long-running application server. Development is `uv sync`, then edit Python, then `uv run pytest` / `uv run ruff` / `uv run crewai`.
+
+Standard install, lint, type-check, and test commands live in [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md). Use `uv`, not pip.
+
+**Non-obvious run notes:**
+
+- `uv` is installed at `~/.local/bin`. New shells pick it up via `~/.bashrc`; if a command cannot find `uv`, prepend `$HOME/.local/bin` to `PATH`.
+- Pytest `addopts` already include `-n auto` (xdist) and `--block-network`. Do not pass `-p no:xdist`; it conflicts with those addopts and pytest exits with an unrecognized-arguments error.
+- The test suite is offline: `.env.test` supplies fake keys and VCR cassettes replay HTTP. A live `crewai run` against a real provider needs an LLM API key (for example `OPENAI_API_KEY`).
+- `crewai create crew <name>` is interactive unless you set `CREWAI_DMN=1` (skips the provider picker).
+- Docs preview is optional: `cd docs && mintlify dev`.
