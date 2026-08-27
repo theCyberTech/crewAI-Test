@@ -1,6 +1,6 @@
 ---
 title: Escrita de Arquivo
-description: O `FileWriterTool` foi projetado para escrever conteúdo em arquivos.
+description: Escreva texto em um arquivo.
 icon: file-pen
 mode: "wide"
 ---
@@ -9,13 +9,15 @@ mode: "wide"
 
 ## Descrição
 
-O `FileWriterTool` é um componente do pacote crewai_tools, projetado para simplificar o processo de escrita de conteúdo em arquivos com compatibilidade multiplataforma (Windows, Linux, macOS).  
-É particularmente útil em cenários como geração de relatórios, salvamento de logs, criação de arquivos de configuração e mais.  
-Essa ferramenta lida com diferenças de caminhos entre sistemas operacionais, suporta codificação UTF-8 e cria diretórios automaticamente caso eles não existam, facilitando a organização da sua saída de forma confiável em diferentes plataformas.
+O `FileWriterTool` escreve texto em um arquivo.
+
+Ele cria pastas que não existem.
+Ele usa UTF-8 por padrão.
+Ele escreve só texto. Ele não escreve arquivos binários.
+
+As escritas ficam dentro de uma pasta segura. Por padrão, essa pasta é o diretório de trabalho atual. Passe `base_dir` para usar outra pasta.
 
 ## Instalação
-
-Instale o pacote crewai_tools para utilizar o `FileWriterTool` em seus projetos:
 
 ```shell
 pip install 'crewai[tools]'
@@ -23,15 +25,11 @@ pip install 'crewai[tools]'
 
 ## Exemplo
 
-Para começar a usar o `FileWriterTool`:
-
 ```python Code
 from crewai_tools import FileWriterTool
 
-# Inicialize a ferramenta
 file_writer_tool = FileWriterTool()
 
-# Escreva conteúdo em um arquivo em um diretório especificado
 result = file_writer_tool.run(
     filename='example.txt',
     content='This is a test content.',
@@ -42,14 +40,34 @@ print(result)
 
 ## Argumentos
 
-- `filename`: O nome do arquivo que você deseja criar ou sobrescrever.
-- `content`: O conteúdo a ser escrito no arquivo.
-- `directory` (opcional): O caminho para o diretório onde o arquivo será criado. Por padrão, utiliza o diretório atual (`.`). Se o diretório não existir, ele será criado.
+O agente passa estes quando executa:
 
-## Conclusão
+- `filename`: Nome do arquivo, relativo a `directory`. Você pode incluir pastas no nome, como `reports/weekly.txt`. Pastas ausentes são criadas.
+- `content`: O texto a escrever.
+- `directory` (opcional): Pasta em que escrever. Um caminho relativo fica dentro da pasta permitida da ferramenta (`base_dir` se você definir; senão, o diretório de trabalho atual). O padrão é a raiz dessa pasta (`./`). Pastas ausentes são criadas.
+- `overwrite` (opcional): Substitui o arquivo se ele já existir. Passe `true` ou `false`. Outras formas de sim/não também funcionam (`yes`/`no`, `on`/`off`, `1`/`0`). O padrão é `false`. Se o arquivo existir e `overwrite` for `false`, a ferramenta retorna um erro e não altera o arquivo.
 
-Ao integrar o `FileWriterTool` aos seus crews, os agentes podem escrever conteúdo em arquivos de forma confiável em diferentes sistemas operacionais.  
-Esta ferramenta é essencial para tarefas que exigem salvamento de dados de saída, criação de sistemas de arquivos estruturados e manipulação de operações de arquivos multiplataforma.  
-É especialmente recomendada para usuários do Windows que possam enfrentar problemas ao escrever arquivos com as operações padrão do Python.
+Você define estes ao criar a ferramenta:
 
-Seguindo as orientações de configuração e uso fornecidas, incorporar essa ferramenta em projetos é simples e garante um comportamento consistente de escrita de arquivos em todas as plataformas.
+- `base_dir` (opcional): A pasta em que as escritas devem permanecer. O padrão é o diretório de trabalho atual no momento da escrita. Se você definir um caminho, a ferramenta o trava na criação. Mudar o diretório de trabalho depois não o move.
+- `encoding` (opcional): Como codificar o texto. O padrão é `utf-8`.
+
+## Caminhos permitidos
+
+Um agente costuma escolher `directory` e `filename` em tempo de execução. A ferramenta bloqueia caminhos que saem da pasta segura.
+
+- O `directory` final deve estar dentro de `base_dir`. Se você não definir `base_dir`, isso é o diretório de trabalho atual no momento da escrita.
+- O caminho final do arquivo deve estar dentro desse `directory`.
+- A ferramenta resolve `..`, caminhos absolutos e symlinks antes de verificar. Eles não podem ser usados para sair da pasta segura.
+
+Para permitir que um agente escreva em outra pasta, defina `base_dir`:
+
+```python Code
+file_writer_tool = FileWriterTool(base_dir='/var/output')
+```
+
+<Note>
+Versões antigas deixavam um `directory` absoluto escrever em qualquer lugar em que o processo pudesse escrever. Se você precisa disso, defina `base_dir` para a pasta que deseja permitir.
+
+`CREWAI_TOOLS_ALLOW_UNSAFE_PATHS=true` desliga essas verificações para todas as ferramentas crewai-tools no processo. Isso também desliga as verificações de segurança de URL. Prefira `base_dir`. Em workers compartilhados, defina `CREWAI_TOOLS_FORCE_SAFE_PATHS=true` para que um usuário não possa desligar as verificações.
+</Note>
