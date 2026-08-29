@@ -9,13 +9,9 @@ mode: "wide"
 
 ## Descrição
 
-O `FileWriterTool` escreve texto em um arquivo.
+O `FileWriterTool` escreve texto em um arquivo. Diretórios ausentes são criados automaticamente. A codificação padrão é UTF-8. A ferramenta escreve só texto, não arquivos binários.
 
-Ele cria pastas que não existem.
-Ele usa UTF-8 por padrão.
-Ele escreve só texto. Ele não escreve arquivos binários.
-
-As escritas ficam dentro de uma pasta segura. Por padrão, essa pasta é o diretório de trabalho atual. Passe `base_dir` para usar outra pasta.
+As escritas ficam dentro de `base_dir`, que por padrão é o diretório de trabalho atual.
 
 ## Instalação
 
@@ -40,34 +36,32 @@ print(result)
 
 ## Argumentos
 
-O agente passa estes quando executa:
+O agente fornece estes em tempo de execução:
 
-- `filename`: Nome do arquivo, relativo a `directory`. Você pode incluir pastas no nome, como `reports/weekly.txt`. Pastas ausentes são criadas.
+- `filename`: Nome do arquivo a escrever, relativo a `directory`. Pode incluir subdiretórios, que são criados se não existirem.
 - `content`: O texto a escrever.
-- `directory` (opcional): Pasta em que escrever. Um caminho relativo fica dentro da pasta permitida da ferramenta (`base_dir` se você definir; senão, o diretório de trabalho atual). O padrão é a raiz dessa pasta (`./`). Pastas ausentes são criadas.
-- `overwrite` (opcional): Substitui o arquivo se ele já existir. Passe `true` ou `false`. Outras formas de sim/não também funcionam (`yes`/`no`, `on`/`off`, `1`/`0`). O padrão é `false`. Se o arquivo existir e `overwrite` for `false`, a ferramenta retorna um erro e não altera o arquivo.
+- `directory` (opcional): Diretório no qual escrever. Um caminho relativo é resolvido dentro do diretório permitido da ferramenta (`base_dir` quando definido; caso contrário, o diretório de trabalho atual) e tem como padrão a raiz desse diretório (`./`). É criado se não existir.
+- `overwrite` (opcional): Se um arquivo existente deve ser substituído. Aceita `true`/`false` (também `yes`/`no`, `on`/`off`, `1`/`0`). O padrão é `false`, que retorna um erro em vez de substituir o arquivo.
 
-Você define estes ao criar a ferramenta:
+Você define estes ao construir a ferramenta:
 
-- `base_dir` (opcional): A pasta em que as escritas devem permanecer. O padrão é o diretório de trabalho atual no momento da escrita. Se você definir um caminho, a ferramenta o trava na criação. Mudar o diretório de trabalho depois não o move.
-- `encoding` (opcional): Como codificar o texto. O padrão é `utf-8`.
+- `base_dir` (opcional): Diretório dentro do qual as escritas devem permanecer. O padrão é o diretório de trabalho atual no momento da escrita. Um caminho que você define é resolvido na construção da ferramenta, então uma mudança posterior do diretório de trabalho não o move.
+- `encoding` (opcional): Codificação de texto usada para escrever o arquivo. O padrão é `utf-8`.
 
 ## Caminhos permitidos
 
-Um agente costuma escolher `directory` e `filename` em tempo de execução. A ferramenta bloqueia caminhos que saem da pasta segura.
+Como `directory` e `filename` costumam ser escolhidos por um LLM em tempo de execução, as escritas ficam confinadas a um sandbox:
 
-- O `directory` final deve estar dentro de `base_dir`. Se você não definir `base_dir`, isso é o diretório de trabalho atual no momento da escrita.
-- O caminho final do arquivo deve estar dentro desse `directory`.
-- A ferramenta resolve `..`, caminhos absolutos e symlinks antes de verificar. Eles não podem ser usados para sair da pasta segura.
+- O `directory` resolvido deve estar dentro de `base_dir` (o diretório de trabalho atual no momento da escrita se você não definir `base_dir`).
+- O caminho do arquivo resolvido deve estar dentro desse `directory`.
+- Segmentos `..`, caminhos absolutos e symlinks são resolvidos antes das duas verificações, então não podem ser usados para escapar.
 
-Para permitir que um agente escreva em outra pasta, defina `base_dir`:
+Para permitir que um agente escreva fora do diretório de trabalho, aponte `base_dir` para a árvore alvo:
 
 ```python Code
 file_writer_tool = FileWriterTool(base_dir='/var/output')
 ```
 
 <Note>
-Versões antigas deixavam um `directory` absoluto escrever em qualquer lugar em que o processo pudesse escrever. Se você precisa disso, defina `base_dir` para a pasta que deseja permitir.
-
-`CREWAI_TOOLS_ALLOW_UNSAFE_PATHS=true` desliga essas verificações para todas as ferramentas crewai-tools no processo. Isso também desliga as verificações de segurança de URL. Prefira `base_dir`. Em workers compartilhados, defina `CREWAI_TOOLS_FORCE_SAFE_PATHS=true` para que um usuário não possa desligar as verificações.
+Anteriormente, um `directory` absoluto podia escrever em qualquer lugar em que o processo tivesse permissão. Se você dependia disso, defina `base_dir` para a árvore que deseja permitir. Definir `CREWAI_TOOLS_ALLOW_UNSAFE_PATHS=true` restaura o comportamento antigo, mas desativa verificações de caminho e URL em todo o processo para todas as ferramentas do crewai-tools, inclusive as proteções de SSRF nas ferramentas que buscam URLs. Prefira `base_dir`. Em workers gerenciados, defina `CREWAI_TOOLS_FORCE_SAFE_PATHS=true` para que um tenant não possa desativar essas verificações.
 </Note>
