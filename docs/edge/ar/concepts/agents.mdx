@@ -331,22 +331,39 @@ researcher = Agent(
 
 يمكن استخدام الوكلاء مباشرة بدون المرور بمهمة أو سير عمل طاقم باستخدام طريقة `kickoff()`. يوفر هذا طريقة أبسط للتفاعل مع وكيل عندما لا تحتاج إلى إمكانيات تنسيق الطاقم الكاملة.
 
+هذا مثال كامل يمكن نسخه وتشغيله. يحتاج إلى مفتاح API لنموذج لغوي في البيئة (مثل `OPENAI_API_KEY`). `role` و`goal` و`backstory` حقول مطلوبة.
+
+```python Code
+from crewai import Agent
+
+agent = Agent(
+    role="Travel Advisor",
+    goal="Give concise, practical trip advice",
+    backstory="You have planned hundreds of weekend trips and keep answers short.",
+    verbose=True,
+)
+
+result = agent.kickoff("Plan a 2-day trip to Lisbon for a first-time visitor.")
+print(result.raw)
+```
+
+يعيد `kickoff()` كائن `LiteAgentOutput`. استخدم `result.raw` للإجابة النصية. إذا مرّرت `response_format`، استخدم `result.pydantic` للنموذج المُحلَّل.
+
+لمنح الوكيل أدوات، مرّرها عند الإنشاء:
+
 ```python Code
 from crewai import Agent
 from crewai_tools import SerperDevTool
 
-# إنشاء وكيل
 researcher = Agent(
     role="AI Technology Researcher",
     goal="Research the latest AI developments",
+    backstory="You track model releases, papers, and product launches.",
     tools=[SerperDevTool()],
-    verbose=True
+    verbose=True,
 )
 
-# استخدام kickoff() للتفاعل مباشرة مع الوكيل
 result = researcher.kickoff("What are the latest developments in language models?")
-
-# الوصول إلى الاستجابة الخام
 print(result.raw)
 ```
 

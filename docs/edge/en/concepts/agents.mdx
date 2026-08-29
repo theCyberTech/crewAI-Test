@@ -552,22 +552,39 @@ Agents can be used directly without going through a task or crew workflow using 
 
 The `kickoff()` method allows you to send messages directly to an agent and get a response, similar to how you would interact with an LLM but with all the agent's capabilities (tools, reasoning, etc.).
 
+This is a complete, copy-pasteable example. It needs an LLM API key in the environment (for example `OPENAI_API_KEY`). `role`, `goal`, and `backstory` are required.
+
+```python Code
+from crewai import Agent
+
+agent = Agent(
+    role="Travel Advisor",
+    goal="Give concise, practical trip advice",
+    backstory="You have planned hundreds of weekend trips and keep answers short.",
+    verbose=True,
+)
+
+result = agent.kickoff("Plan a 2-day trip to Lisbon for a first-time visitor.")
+print(result.raw)
+```
+
+`kickoff()` returns a `LiteAgentOutput`. Use `result.raw` for the text answer. If you passed `response_format`, use `result.pydantic` for the parsed model.
+
+To give the agent tools, pass them at construction time:
+
 ```python Code
 from crewai import Agent
 from crewai_tools import SerperDevTool
 
-# Create an agent
 researcher = Agent(
     role="AI Technology Researcher",
     goal="Research the latest AI developments",
+    backstory="You track model releases, papers, and product launches.",
     tools=[SerperDevTool()],
-    verbose=True
+    verbose=True,
 )
 
-# Use kickoff() to interact directly with the agent
 result = researcher.kickoff("What are the latest developments in language models?")
-
-# Access the raw response
 print(result.raw)
 ```
 

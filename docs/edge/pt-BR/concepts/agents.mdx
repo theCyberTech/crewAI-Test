@@ -582,6 +582,46 @@ agent = Agent(
   `respect_context_window` conforme deseja e o CrewAI cuida do resto!
 </Note>
 
+## Interação direta com o agente via `kickoff()`
+
+Agentes podem ser usados diretamente, sem passar por uma task ou por um fluxo de crew, com o método `kickoff()`. Isso é mais simples quando você não precisa da orquestração completa de uma crew.
+
+Este é um exemplo completo, pronto para copiar e executar. Ele precisa de uma chave de API de LLM no ambiente (por exemplo `OPENAI_API_KEY`). `role`, `goal` e `backstory` são obrigatórios.
+
+```python Code
+from crewai import Agent
+
+agent = Agent(
+    role="Travel Advisor",
+    goal="Give concise, practical trip advice",
+    backstory="You have planned hundreds of weekend trips and keep answers short.",
+    verbose=True,
+)
+
+result = agent.kickoff("Plan a 2-day trip to Lisbon for a first-time visitor.")
+print(result.raw)
+```
+
+`kickoff()` retorna um `LiteAgentOutput`. Use `result.raw` para a resposta em texto. Se você passou `response_format`, use `result.pydantic` para o modelo parseado.
+
+Para dar ferramentas ao agente, passe-as na construção:
+
+```python Code
+from crewai import Agent
+from crewai_tools import SerperDevTool
+
+researcher = Agent(
+    role="AI Technology Researcher",
+    goal="Research the latest AI developments",
+    backstory="You track model releases, papers, and product launches.",
+    tools=[SerperDevTool()],
+    verbose=True,
+)
+
+result = researcher.kickoff("What are the latest developments in language models?")
+print(result.raw)
+```
+
 ## Considerações e Boas Práticas Importantes
 
 ### Segurança e Execução de Código
