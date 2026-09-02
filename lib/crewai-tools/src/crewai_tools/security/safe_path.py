@@ -26,6 +26,27 @@ _FORCE_SAFE_PATHS_ENV = "CREWAI_TOOLS_FORCE_SAFE_PATHS"
 _BYPASS_HINT = f"Set {_UNSAFE_PATHS_ENV}=true to bypass this check."
 
 
+def resolve_path(path: str, base_dir: str | None = None) -> str:
+    """Resolve *path* to a real absolute path, anchoring relatives to *base_dir*.
+
+    Every sandbox helper in this module must agree on what a relative path
+    means, otherwise the same string could name two different files. Use this
+    rather than ``os.path.realpath`` when a tool needs the same answer the
+    containment check will compute.
+
+    Args:
+        path: The path to resolve.
+        base_dir: Anchor for relative paths. Defaults to the working directory.
+
+    Returns:
+        The resolved absolute path with symlinks and ``..`` components removed.
+    """
+    if os.path.isabs(path):
+        return os.path.realpath(path)
+    base = os.path.realpath(base_dir) if base_dir is not None else os.getcwd()
+    return os.path.realpath(os.path.join(base, path))
+
+
 def format_path_for_display(path: str, base_dir: str | None = None) -> str:
     """Return a path label that does not expose absolute directory prefixes."""
     if base_dir is None:
@@ -33,9 +54,7 @@ def format_path_for_display(path: str, base_dir: str | None = None) -> str:
 
     try:
         resolved_base = os.path.realpath(base_dir)
-        resolved_path = os.path.realpath(
-            os.path.join(resolved_base, path) if not os.path.isabs(path) else path
-        )
+        resolved_path = resolve_path(path, resolved_base)
         if os.path.commonpath([resolved_base, resolved_path]) == resolved_base:
             return os.path.relpath(resolved_path, resolved_base)
     except (OSError, ValueError) as exc:
@@ -117,9 +136,7 @@ def validate_file_path(path: str, base_dir: str | None = None) -> str:
         base_dir = os.getcwd()
 
     resolved_base = os.path.realpath(base_dir)
-    resolved_path = os.path.realpath(
-        os.path.join(resolved_base, path) if not os.path.isabs(path) else path
-    )
+    resolved_path = resolve_path(path, resolved_base)
 
     # Ensure the resolved path is within the base directory.
     # When resolved_base already ends with a separator (e.g. the filesystem
