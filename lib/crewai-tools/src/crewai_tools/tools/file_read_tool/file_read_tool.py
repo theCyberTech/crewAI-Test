@@ -1,36 +1,37 @@
 from itertools import islice
 import os
-from typing import Any
+from typing import IO
 
 from crewai.tools import BaseTool
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from typing_extensions import Self
 
 from crewai_tools.security.safe_path import (
     format_error_for_display,
     format_path_for_display,
     format_sandbox_error,
+    resolve_path,
     validate_file_path,
 )
 
 
-def _resolve_against_base(path: str, base_dir: str | None) -> str:
-    """Resolve *path* the way the sandbox does, anchoring relatives to *base_dir*.
+_DESCRIPTION = (
+    "A tool that reads the content of a file. {default}Provide 'file_path' with "
+    "the path to the file you want to read. Reads are confined to the tool's "
+    "allowed directory; a path that resolves outside it is rejected. Optionally, "
+    "provide 'start_line' to start reading from a specific line and 'line_count' "
+    "to limit the number of lines read."
+)
 
-    ``validate_file_path`` and ``format_path_for_display`` both join a relative
-    path onto *base_dir* rather than the working directory. Resolution has to
-    agree with them, or the same relative string would mean two different files.
 
-    Args:
-        path: The path to resolve.
-        base_dir: The anchor for relative paths. Defaults to the working directory.
-
-    Returns:
-        The resolved absolute path.
-    """
-    if os.path.isabs(path):
-        return os.path.realpath(path)
-    base = os.path.realpath(base_dir) if base_dir is not None else os.getcwd()
-    return os.path.realpath(os.path.join(base, path))
+def _describe(default_label: str | None = None) -> str:
+    default = (
+        f"The default file is {default_label}, which is read when 'file_path' "
+        f"is omitted. "
+        if default_label is not None
+        else ""
+    )
+    return _DESCRIPTION.format(default=default)
 
 
 class FileReadToolSchema(BaseModel):
@@ -54,15 +55,10 @@ class FileReadToolSchema(BaseModel):
 class FileReadTool(BaseTool):
     """A tool for reading file contents.
 
-    This tool inherits its schema handling from BaseTool to avoid recursive schema
-    definition issues. The args_schema is set to FileReadToolSchema, whose
-    file_path parameter is optional so the tool's default file can be read by
-    omitting it. The schema should not be overridden in the constructor as it
-    would break the inheritance chain and cause infinite loops.
+    The file to read can be named in two ways:
 
-    The tool supports two ways of specifying the file path:
-    1. At construction time via the file_path parameter
-    2. At runtime via the file_path parameter in the tool's input
+    1. At construction time via ``file_path``, which becomes the tool's default.
+    2. At runtime via the ``file_path`` argument in the tool's input.
 
     Paths supplied at runtime must resolve inside ``base_dir`` (the current
     working directory by default), since they are typically chosen by an LLM.
@@ -73,12 +69,15 @@ class FileReadTool(BaseTool):
     either by omitting ``file_path`` or by the label shown in the description.
 
     Args:
-        file_path (Optional[str]): Path to the file to be read. If provided,
-            this becomes the default file path for the tool.
-        base_dir (Optional[str]): Directory that runtime paths must stay inside.
-            Defaults to the current working directory.
-        encoding (str): Text encoding used to decode the file. Defaults to UTF-8.
-        **kwargs: Additional keyword arguments passed to BaseTool.
+        file_path: Path to the file to be read. If provided, this becomes the
+            default file path for the tool.
+        base_dir: Directory that runtime paths must stay inside. Defaults to
+            the current working directory.
+        encoding: Text encoding used to decode the file. Defaults to UTF-8.
+        max_chars: Upper bound on the number of characters returned from a
+            single read. Longer output is cut off with a note telling the
+            agent to page through the file with ``start_line``/``line_count``.
+            ``None`` (the default) returns the whole selection.
 
     Example:
         >>> tool = FileReadTool(file_path="/path/to/file.txt")
@@ -89,14 +88,17 @@ class FileReadTool(BaseTool):
         ... )  # Reads lines 100-149
         >>> # Widen the sandbox so the agent may read anything under /data:
         >>> tool = FileReadTool(base_dir="/data")
+        >>> # Keep any single read under 20k characters:
+        >>> tool = FileReadTool(max_chars=20_000)
     """
 
     name: str = "Read a file's content"
-    description: str = "A tool that reads the content of a file. To use this tool, provide a 'file_path' parameter with the path to the file you want to read. Reads are confined to the tool's allowed directory; a path that resolves outside it is rejected. Optionally, provide 'start_line' to start reading from a specific line and 'line_count' to limit the number of lines read."
+    description: str = _describe()
     args_schema: type[BaseModel] = FileReadToolSchema
     file_path: str | None = None
     base_dir: str | None = None
     encoding: str = "utf-8"
+    max_chars: int | None = Field(default=None, gt=0)
 
     # Pinned at construction so a later chdir cannot change which file the
     # developer-declared default refers to.
@@ -104,45 +106,27 @@ class FileReadTool(BaseTool):
     # The label the tool's description shows the LLM for the declared file.
     _declared_label: str | None = PrivateAttr(default=None)
 
-    def __init__(
-        self,
-        file_path: str | None = None,
-        base_dir: str | None = None,
-        encoding: str = "utf-8",
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the FileReadTool.
+    @field_validator("base_dir")
+    @classmethod
+    def _anchor_base_dir(cls, value: str | None) -> str | None:
+        """Resolve base_dir once so a later chdir cannot move the sandbox."""
+        return os.path.realpath(value) if value is not None else None
 
-        Args:
-            file_path (Optional[str]): Path to the file to be read. If provided,
-                this becomes the default file path for the tool.
-            base_dir (Optional[str]): Directory that runtime paths must stay
-                inside. Defaults to the current working directory.
-            encoding (str): Text encoding used to decode the file.
-            **kwargs: Additional keyword arguments passed to BaseTool.
+    @model_validator(mode="after")
+    def _pin_declared_file(self) -> Self:
+        """Pin the declared default file and advertise it in the description.
+
+        Runs on ``model_validate`` too, so the pin survives a serialization
+        round trip even though private attributes are not dumped.
         """
-        # Anchor base_dir once, so the sandbox root cannot move under a later
-        # chdir while the declared file stays pinned to its original location.
-        if base_dir is not None:
-            base_dir = os.path.realpath(base_dir)
+        if self.file_path is None:
+            return self
 
-        display_path = None
-        if file_path is not None:
-            display_path = format_path_for_display(file_path, base_dir)
-            kwargs["description"] = (
-                f"A tool that reads file content. The default file is {display_path}, which is read when 'file_path' is omitted. You can also provide a different 'file_path' parameter to read another file, though reads are confined to the tool's allowed directory and a path that resolves outside it is rejected. Specify 'start_line' and 'line_count' to read specific parts of the file."
-            )
-
-        super().__init__(**kwargs)
-        self.file_path = file_path
-        self.base_dir = base_dir
-        self.encoding = encoding
-        self._declared_realpath = (
-            _resolve_against_base(file_path, base_dir)
-            if file_path is not None
-            else None
-        )
-        self._declared_label = display_path
+        self._declared_realpath = resolve_path(self.file_path, self.base_dir)
+        self._declared_label = format_path_for_display(self.file_path, self.base_dir)
+        if "description" not in self.model_fields_set:
+            self.description = _describe(self._declared_label)
+        return self
 
     def _resolve_path(self, file_path: str) -> str:
         """Resolve *file_path* and confirm the tool is allowed to read it.
@@ -154,22 +138,48 @@ class FileReadTool(BaseTool):
         else — including any path an LLM invents at runtime — must resolve
         inside ``base_dir``.
 
-        Args:
-            file_path: The path to resolve.
-
-        Returns:
-            The resolved, allowed absolute path.
-
         Raises:
             ValueError: If the path resolves outside ``base_dir``.
         """
         declared = self._declared_realpath
         if declared is not None and (
             file_path == self._declared_label
-            or _resolve_against_base(file_path, self.base_dir) == declared
+            or resolve_path(file_path, self.base_dir) == declared
         ):
             return declared
         return validate_file_path(file_path, self.base_dir)
+
+    def _read_window(
+        self, file: IO[str], start_line: int, line_count: int | None
+    ) -> str | None:
+        """Return the requested lines, or ``None`` if *start_line* is past EOF.
+
+        A read cap only needs ``max_chars + 1`` characters to know whether to
+        truncate, so a capped full read never pulls a huge file into memory.
+        """
+        if start_line == 1 and line_count is None:
+            if self.max_chars is None:
+                return file.read()
+            return file.read(self.max_chars + 1)
+
+        start_idx = max(start_line - 1, 0)
+        stop_idx = None if line_count is None else start_idx + line_count
+
+        # islice stops pulling lines once stop_idx is reached, so a small
+        # window near the top of a huge file does not scan the whole file.
+        selected_lines = list(islice(file, start_idx, stop_idx))
+        if not selected_lines and start_idx > 0:
+            return None
+        return "".join(selected_lines)
+
+    def _truncate(self, text: str, display_path: str) -> str:
+        if self.max_chars is None or len(text) <= self.max_chars:
+            return text
+        return (
+            f"{text[: self.max_chars]}\n\n[Output truncated to {self.max_chars} "
+            f"characters. Use 'start_line' and 'line_count' to read the rest of "
+            f"{display_path}.]"
+        )
 
     def _run(
         self,
@@ -198,20 +208,7 @@ class FileReadTool(BaseTool):
         display_path = format_path_for_display(file_path, self.base_dir)
         try:
             with open(file_path, "r", encoding=self.encoding) as file:
-                if start_line == 1 and line_count is None:
-                    return file.read()
-
-                start_idx = max(start_line - 1, 0)
-                stop_idx = None if line_count is None else start_idx + line_count
-
-                # islice stops pulling lines once stop_idx is reached, so a small
-                # window near the top of a huge file does not scan the whole file.
-                selected_lines = list(islice(file, start_idx, stop_idx))
-
-                if not selected_lines and start_idx > 0:
-                    return f"Error: Start line {start_line} exceeds the number of lines in the file."
-
-                return "".join(selected_lines)
+                text = self._read_window(file, start_line, line_count)
         except FileNotFoundError:
             return f"Error: File not found at path: {display_path}"
         except PermissionError:
@@ -227,3 +224,7 @@ class FileReadTool(BaseTool):
                 f"Error: Failed to read file {display_path}. "
                 f"{format_error_for_display(e)}"
             )
+
+        if text is None:
+            return f"Error: Start line {start_line} exceeds the number of lines in the file."
+        return self._truncate(text, display_path)

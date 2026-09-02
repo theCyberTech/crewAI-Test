@@ -436,6 +436,63 @@ def test_null_byte_path_returns_error_instead_of_raising(tmp_path, monkeypatch):
     assert "Error" in result
 
 
+def test_max_chars_truncates_full_read_and_points_at_paging(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "big.txt").write_text("x" * 500)
+
+    result = FileReadTool(max_chars=100)._run(file_path="big.txt")
+
+    assert result.startswith("x" * 100)
+    assert "x" * 101 not in result
+    assert "truncated to 100 characters" in result
+    assert "start_line" in result and "line_count" in result
+    assert "big.txt" in result
+    assert str(tmp_path) not in result
+
+
+def test_max_chars_does_not_read_past_the_cap(tmp_path, monkeypatch):
+    """A capped full read must not load the whole file just to cut it."""
+    monkeypatch.chdir(tmp_path)
+    requested_sizes = []
+
+    class SizedFile(CountingFile):
+        def read(self, size=-1):
+            requested_sizes.append(size)
+            return "x" * (size if size >= 0 else 10_000)
+
+    with patch("builtins.open", return_value=SizedFile([])):
+        result = FileReadTool(max_chars=100)._run(file_path="big.txt")
+
+    assert requested_sizes == [101]
+    assert "truncated to 100 characters" in result
+
+
+def test_max_chars_applies_to_line_windows(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "lines.txt").write_text("".join(f"Line {i}\n" for i in range(1, 50)))
+
+    result = FileReadTool(max_chars=12)._run(
+        file_path="lines.txt", start_line=2, line_count=5
+    )
+
+    assert result.startswith("Line 2\nLine ")
+    assert "truncated" in result
+
+
+def test_output_under_max_chars_is_unchanged(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "small.txt").write_text("short")
+
+    assert FileReadTool(max_chars=100)._run(file_path="small.txt") == "short"
+
+
+def test_custom_description_is_preserved_with_declared_file():
+    tool = FileReadTool(file_path="notes.txt", description="Read the notes")
+
+    assert tool.description == "Read the notes"
+    assert tool._declared_label == "notes.txt"
+
+
 def test_decode_error_names_the_encoding(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "binary.bin").write_bytes(bytes(range(256)))
