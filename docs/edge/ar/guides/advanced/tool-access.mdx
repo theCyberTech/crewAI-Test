@@ -1,0 +1,85 @@
+---
+title: قوائم الوصول إلى الأدوات
+description: قيّد الأدوات التي يمكن للوكيل تشغيلها باستخدام allowed_tools وblocked_tools وrequire_approval_tools في SecurityConfig.
+icon: shield-check
+mode: "wide"
+---
+
+## Overview
+
+يمكن لـ `SecurityConfig` تقييد استدعاءات الأدوات وقت التنفيذ. يفرض hook من الطرف الأول `PRE_TOOL_CALL` القوائم بأسلوب **fail-closed**: يُرفض الاسم المفقود، أو خطأ تقييم السياسة، أو أداة كتابة/SQL/MCP غير مدرجة.
+
+عيّن القوائم على `Agent` أو `Task` أو `Crew`. يفوز التركيب الأكثر تقييدًا. تُطبَّع الأسماء لتتوافق مع قيم `tool_name` في الـ hook، لذا `"File Writer Tool"` و`"file_writer_tool"` هما الإدخال نفسه.
+
+| الحقل | عند التعيين | التأثير |
+| --- | --- | --- |
+| `allowed_tools` | هذه الأسماء فقط يمكن أن تعمل. `[]` يرفض كل أداة. | Allowlist |
+| `blocked_tools` | هذه الأسماء لا تعمل أبدًا. **الحظر يفوز** على السماح. | Denylist |
+| `require_approval_tools` | بعد اجتياز السماح/الحظر، يتوقف لأدخل المشغّل (`yes` / `y` / `approve`). | Approval gate |
+
+`None` (الافتراضي) يعني عدم وجود قاعدة. تبقى الوكلاء الحاليون بلا قيد حتى تعيّن قائمة.
+
+## اسمح بأدوات القراءة فقط
+
+أعطِ الوكيل أدوات الكتابة وSQL وMCP إذا كنت تحتاجها على الكائن، لكن أدرج الأسماء الآمنة فقط. لا يمكن تشغيل الأدوات غير المدرجة.
+
+```python
+from crewai import Agent, Crew, Task
+from crewai.mcp import MCPServerStdio
+from crewai.security import SecurityConfig
+from crewai_tools import FileReadTool, FileWriterTool, NL2SQLTool, WebsiteSearchTool
+
+researcher = Agent(
+    role="Researcher",
+    goal="Summarize public sources without changing systems",
+    backstory="A careful analyst who reads, then reports.",
+    tools=[
+        FileReadTool(),
+        FileWriterTool(),
+        NL2SQLTool(db_uri="sqlite:///research.db"),
+        WebsiteSearchTool(),
+    ],
+    mcps=[
+        MCPServerStdio(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        )
+    ],
+    security_config=SecurityConfig(
+        allowed_tools=[
+            "Read a file's content",
+            "Search in a specific website",
+        ]
+    ),
+)
+
+task = Task(
+    description="Read notes.md and search the project site for related facts.",
+    expected_output="A short briefing with citations.",
+    agent=researcher,
+)
+
+crew = Crew(agents=[researcher], tasks=[task])
+crew.kickoff()
+```
+
+في هذا الـ crew:
+
+- `File Writer Tool` (`file_writer_tool`) مرفقة لكن **غير مدرجة**، لذا تُحظر الكتابة.
+- `NL2SQLTool` (`nl2sql_tool`) مرفقة لكن **غير مدرجة**، لذا يُحظر SQL.
+- تُسجَّل أدوات MCP بالصيغة `{server}_{tool}` (مثل `filesystem_write_file`). تُحظر ما لم تضف ذلك الاسم المسبوق إلى `allowed_tools`.
+
+## قوائم الحظر والموافقة
+
+استخدم `blocked_tools` عندما يجب أن تبقى معظم الأدوات متاحة ويجب ألا تعمل قلة منها أبدًا. استخدم `require_approval_tools` عندما لا يجوز تشغيل أداة مدرجة إلا بعد أن يكتب المشغّل `yes`.
+
+```python
+SecurityConfig(
+    blocked_tools=["file_writer_tool", "nl2sql_tool"],
+    require_approval_tools=["filesystem_read_file"],
+)
+```
+
+تُدمَج إعدادات الـ agent والـ task والـ crew. إذا رفض أي إعداد الاستدعاء، لا تعمل الأداة.
+
+هذا إنفاذ وقت الاستدعاء. لا تزال عوامل تصفية اكتشاف MCP (`StaticToolFilter`) تخفي الأدوات عن النموذج؛ `SecurityConfig` هو الخط الأخير إذا استُدعيت الأداة على أي حال.

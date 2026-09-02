@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from crewai.hooks import (
     clear_all_tool_call_hooks,
+    tool_hooks,
     unregister_after_tool_call_hook,
     unregister_before_tool_call_hook,
 )
@@ -13,7 +14,9 @@ from crewai.hooks.tool_hooks import (
     get_before_tool_call_hooks,
     register_after_tool_call_hook,
     register_before_tool_call_hook,
+    run_before_tool_call_hooks,
 )
+from crewai.security import SecurityConfig
 import pytest
 
 
@@ -863,3 +866,114 @@ class TestNativeToolCallingHooksIntegration:
         finally:
             unregister_before_tool_call_hook(blocking_before_hook)
             unregister_after_tool_call_hook(after_hook)
+
+
+class TestSecurityConfigToolPolicyHook:
+    """First-party SecurityConfig PRE_TOOL_CALL enforcement."""
+
+    def test_first_party_hook_registered_after_import(self):
+        tool_hooks._before_tool_call_hooks.clear()
+        tool_hooks._ensure_first_party_security_hook_registered()
+
+        assert (
+            tool_hooks.enforce_security_config_tool_policy
+            in tool_hooks._before_tool_call_hooks
+        )
+
+    def test_policy_blocks_after_registry_is_cleared(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(allowed_tools=["read_file"])
+
+        context = ToolCallHookContext(
+            tool_name="file_writer_tool",
+            tool_input={"filename": "out.md"},
+            tool=mock_tool,
+            agent=agent,
+        )
+        blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is True
+
+    def test_policy_allows_listed_tool_after_registry_is_cleared(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(allowed_tools=["read_file"])
+
+        context = ToolCallHookContext(
+            tool_name="read_file",
+            tool_input={"path": "notes.md"},
+            tool=mock_tool,
+            agent=agent,
+        )
+        blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is False
+
+    def test_require_approval_allows_on_yes(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(require_approval_tools=["nl2sql_tool"])
+
+        context = ToolCallHookContext(
+            tool_name="nl2sql_tool",
+            tool_input={"sql_query": "SELECT 1"},
+            tool=mock_tool,
+            agent=agent,
+        )
+        with patch.object(context, "request_human_input", return_value="yes"):
+            blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is False
+
+    def test_require_approval_blocks_on_no(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(require_approval_tools=["nl2sql_tool"])
+
+        context = ToolCallHookContext(
+            tool_name="nl2sql_tool",
+            tool_input={"sql_query": "SELECT 1"},
+            tool=mock_tool,
+            agent=agent,
+        )
+        with patch.object(context, "request_human_input", return_value="no"):
+            blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is True
+
+    def test_require_approval_blocks_on_empty_response(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(require_approval_tools=["nl2sql_tool"])
+
+        context = ToolCallHookContext(
+            tool_name="nl2sql_tool",
+            tool_input={"sql_query": "SELECT 1"},
+            tool=mock_tool,
+            agent=agent,
+        )
+        with patch.object(context, "request_human_input", return_value=""):
+            blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is True
+
+    def test_policy_eval_error_is_fail_closed(self, mock_tool):
+        agent = Mock()
+        agent.verbose = False
+        agent.security_config = SecurityConfig(allowed_tools=["read_file"])
+
+        context = ToolCallHookContext(
+            tool_name="read_file",
+            tool_input={},
+            tool=mock_tool,
+            agent=agent,
+        )
+        with patch(
+            "crewai.hooks.tool_hooks.evaluate_tool_policy",
+            side_effect=RuntimeError("boom"),
+        ):
+            blocked = run_before_tool_call_hooks(context)
+
+        assert blocked is True
+

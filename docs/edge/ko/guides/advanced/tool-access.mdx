@@ -1,0 +1,85 @@
+---
+title: Tool 접근 목록
+description: SecurityConfig의 allowed_tools, blocked_tools, require_approval_tools로 Agent가 실행할 수 있는 tool을 제한합니다.
+icon: shield-check
+mode: "wide"
+---
+
+## Overview
+
+`SecurityConfig`는 호출 시점에 tool 호출을 제한할 수 있습니다. 퍼스트파티 `PRE_TOOL_CALL` hook이 목록을 **fail-closed**로 적용합니다. tool 이름이 없거나, 정책 평가가 실패하거나, 목록에 없는 쓰기/SQL/MCP tool은 거부됩니다.
+
+목록은 `Agent`, `Task`, 또는 `Crew`에 설정합니다. 가장 제한적인 조합이 우선합니다. 이름은 hook의 `tool_name` 값과 맞도록 정규화되므로 `"File Writer Tool"`과 `"file_writer_tool"`은 같은 항목입니다.
+
+| 필드 | 설정 시 | 효과 |
+| --- | --- | --- |
+| `allowed_tools` | 이 이름만 실행할 수 있습니다. `[]`는 모든 tool을 거부합니다. | Allowlist |
+| `blocked_tools` | 이 이름은 절대 실행되지 않습니다. **차단이 allow보다 우선**합니다. | Denylist |
+| `require_approval_tools` | allow/block을 통과한 뒤 운영자 입력(`yes` / `y` / `approve`)을 기다립니다. | Approval gate |
+
+`None`(기본값)은 규칙이 없음을 의미합니다. 목록을 설정하기 전까지 기존 agent는 제한되지 않습니다.
+
+## 읽기 tool만 허용
+
+객체에 쓰기, SQL, MCP tool을 붙여도 안전한 이름만 목록에 넣으세요. 목록에 없는 tool은 실행할 수 없습니다.
+
+```python
+from crewai import Agent, Crew, Task
+from crewai.mcp import MCPServerStdio
+from crewai.security import SecurityConfig
+from crewai_tools import FileReadTool, FileWriterTool, NL2SQLTool, WebsiteSearchTool
+
+researcher = Agent(
+    role="Researcher",
+    goal="Summarize public sources without changing systems",
+    backstory="A careful analyst who reads, then reports.",
+    tools=[
+        FileReadTool(),
+        FileWriterTool(),
+        NL2SQLTool(db_uri="sqlite:///research.db"),
+        WebsiteSearchTool(),
+    ],
+    mcps=[
+        MCPServerStdio(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        )
+    ],
+    security_config=SecurityConfig(
+        allowed_tools=[
+            "Read a file's content",
+            "Search in a specific website",
+        ]
+    ),
+)
+
+task = Task(
+    description="Read notes.md and search the project site for related facts.",
+    expected_output="A short briefing with citations.",
+    agent=researcher,
+)
+
+crew = Crew(agents=[researcher], tasks=[task])
+crew.kickoff()
+```
+
+이 crew에서:
+
+- `File Writer Tool`(`file_writer_tool`)은 연결되어 있지만 **목록에 없으므로** 쓰기가 차단됩니다.
+- `NL2SQLTool`(`nl2sql_tool`)은 연결되어 있지만 **목록에 없으므로** SQL이 차단됩니다.
+- MCP tool은 `{server}_{tool}`(예: `filesystem_write_file`)로 등록됩니다. 해당 접두사 이름을 `allowed_tools`에 추가하지 않으면 차단됩니다.
+
+## 차단 및 승인 목록
+
+대부분의 tool은 그대로 두고 일부만 절대 실행되지 않게 하려면 `blocked_tools`를 사용하세요. 목록에 있는 tool을 운영자가 `yes`를 입력한 뒤에만 실행하려면 `require_approval_tools`를 사용하세요.
+
+```python
+SecurityConfig(
+    blocked_tools=["file_writer_tool", "nl2sql_tool"],
+    require_approval_tools=["filesystem_read_file"],
+)
+```
+
+Agent, Task, Crew config는 병합됩니다. 어떤 config라도 호출을 거부하면 tool은 실행되지 않습니다.
+
+이것은 호출 시점의 enforcement입니다. MCP discovery 필터(`StaticToolFilter`)는 여전히 모델에서 tool을 숨깁니다. tool이 그래도 호출되면 `SecurityConfig`가 마지막 방어선입니다.

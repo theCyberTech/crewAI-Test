@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 
 from crewai.security import Fingerprint, SecurityConfig
+import pytest
 
 
 def test_security_config_creation_with_defaults():
@@ -47,6 +48,53 @@ def test_security_config_to_dict():
     assert "fingerprint" in config_dict
     assert isinstance(config_dict["fingerprint"], dict)
     assert config_dict["fingerprint"]["metadata"] == {"version": "1.0"}
+    assert config_dict["allowed_tools"] is None
+    assert config_dict["blocked_tools"] is None
+    assert config_dict["require_approval_tools"] is None
+
+
+def test_security_config_tool_lists_default_to_none():
+    """Unconfigured tool lists are None so existing agents stay unrestricted."""
+    config = SecurityConfig()
+
+    assert config.allowed_tools is None
+    assert config.blocked_tools is None
+    assert config.require_approval_tools is None
+
+
+def test_security_config_sanitizes_tool_list_names():
+    """Tool lists are sanitized so they match hook tool_name values."""
+    config = SecurityConfig(
+        allowed_tools=["File Writer Tool", "file_writer_tool"],
+        blocked_tools=["NL2SQLTool"],
+        require_approval_tools=["filesystem_write_file"],
+    )
+
+    assert config.allowed_tools == ["file_writer_tool"]
+    assert config.blocked_tools == ["nl2sql_tool"]
+    assert config.require_approval_tools == ["filesystem_write_file"]
+
+
+def test_security_config_rejects_string_tool_list():
+    """A bare string is not a tool list."""
+    with pytest.raises(ValueError, match="sequence of strings"):
+        SecurityConfig(allowed_tools="read_file")
+
+
+def test_security_config_tool_lists_round_trip():
+    """to_dict / from_dict preserve sanitized tool lists."""
+    config = SecurityConfig(
+        allowed_tools=["read_file"],
+        blocked_tools=["file_writer_tool"],
+        require_approval_tools=["nl2sql_tool"],
+    )
+
+    restored = SecurityConfig.from_dict(config.to_dict())
+
+    assert restored.allowed_tools == ["read_file"]
+    assert restored.blocked_tools == ["file_writer_tool"]
+    assert restored.require_approval_tools == ["nl2sql_tool"]
+    assert restored.fingerprint.uuid_str == config.fingerprint.uuid_str
 
 
 def test_security_config_from_dict():

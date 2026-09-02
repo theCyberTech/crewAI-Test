@@ -1,0 +1,85 @@
+---
+title: Listas de acesso a tools
+description: Restrinja quais tools um agent pode executar com allowed_tools, blocked_tools e require_approval_tools em SecurityConfig.
+icon: shield-check
+mode: "wide"
+---
+
+## Overview
+
+`SecurityConfig` pode restringir chamadas de tools no momento da invocação. Um hook de primeira parte `PRE_TOOL_CALL` aplica as listas de forma **fail-closed**: um nome de tool ausente, um erro na avaliação da política ou uma tool de escrita/SQL/MCP não listada é negada.
+
+Defina as listas em um `Agent`, `Task` ou `Crew`. A combinação mais restritiva prevalece. Os nomes são sanitizados para coincidir com os valores `tool_name` do hook, então `"File Writer Tool"` e `"file_writer_tool"` são a mesma entrada.
+
+| Campo | Quando definido | Efeito |
+| --- | --- | --- |
+| `allowed_tools` | Somente esses nomes podem executar. `[]` nega todas as tools. | Allowlist |
+| `blocked_tools` | Esses nomes nunca executam. **O bloqueio prevalece** sobre o allow. | Denylist |
+| `require_approval_tools` | Depois do allow/block, pausa para entrada do operador (`yes` / `y` / `approve`). | Approval gate |
+
+`None` (o padrão) significa nenhuma regra. Agents existentes permanecem sem restrição até você definir uma lista.
+
+## Permitir somente tools de leitura
+
+Entregue ao agent tools de escrita, SQL e MCP se precisar delas no objeto, mas liste apenas os nomes seguros. Tools não listadas não podem executar.
+
+```python
+from crewai import Agent, Crew, Task
+from crewai.mcp import MCPServerStdio
+from crewai.security import SecurityConfig
+from crewai_tools import FileReadTool, FileWriterTool, NL2SQLTool, WebsiteSearchTool
+
+researcher = Agent(
+    role="Researcher",
+    goal="Summarize public sources without changing systems",
+    backstory="A careful analyst who reads, then reports.",
+    tools=[
+        FileReadTool(),
+        FileWriterTool(),
+        NL2SQLTool(db_uri="sqlite:///research.db"),
+        WebsiteSearchTool(),
+    ],
+    mcps=[
+        MCPServerStdio(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        )
+    ],
+    security_config=SecurityConfig(
+        allowed_tools=[
+            "Read a file's content",
+            "Search in a specific website",
+        ]
+    ),
+)
+
+task = Task(
+    description="Read notes.md and search the project site for related facts.",
+    expected_output="A short briefing with citations.",
+    agent=researcher,
+)
+
+crew = Crew(agents=[researcher], tasks=[task])
+crew.kickoff()
+```
+
+Neste crew:
+
+- `File Writer Tool` (`file_writer_tool`) está anexada, mas **não listada**, então escritas são bloqueadas.
+- `NL2SQLTool` (`nl2sql_tool`) está anexada, mas **não listada**, então SQL é bloqueado.
+- Tools MCP são registradas como `{server}_{tool}` (por exemplo `filesystem_write_file`). Elas são bloqueadas a menos que você adicione esse nome prefixado a `allowed_tools`.
+
+## Listas de bloqueio e aprovação
+
+Use `blocked_tools` quando a maioria das tools deve permanecer disponível e apenas algumas nunca devem executar. Use `require_approval_tools` quando uma tool listada só pode executar depois que um operador digitar `yes`.
+
+```python
+SecurityConfig(
+    blocked_tools=["file_writer_tool", "nl2sql_tool"],
+    require_approval_tools=["filesystem_read_file"],
+)
+```
+
+Configs de agent, task e crew são mescladas. Se qualquer config negar a chamada, a tool não executa.
+
+Isso é enforcement no momento da invocação. Filtros de discovery MCP (`StaticToolFilter`) ainda ocultam tools do modelo; `SecurityConfig` é a última linha se uma tool for chamada mesmo assim.
